@@ -7,6 +7,7 @@ import (
 )
 
 type Context struct {
+	ms    *MicroService
 	next  ContextHandler
 	r     *http.Request
 	paths map[string]string

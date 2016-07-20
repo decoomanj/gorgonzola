@@ -11,21 +11,23 @@ import (
 )
 
 // Health
-type HealthCheck func() error
+type HealthFunc func() error
 
-type HealthStatus struct {
-	sync.RWMutex
-	items map[string]string
+type HealthCheck struct {
+	Name     string
+	Handler  HealthFunc
+	Interval time.Duration
+	healthy  bool
+	msg      string
 }
 
 type HealthChecks struct {
 	sync.RWMutex
-	items map[string]HealthCheck
+	items map[string]*HealthCheck
 }
 
 type Health struct {
 	checks HealthChecks
-	status HealthStatus
 }
 
 type Status struct {
@@ -33,60 +35,43 @@ type Status struct {
 	Errors map[string]string `json:"errors,omitempty"`
 }
 
-func NewHealth() Health {
-	return Health{
-		checks: HealthChecks{items: make(map[string]HealthCheck)},
-		status: HealthStatus{items: make(map[string]string)},
+// NewHealth creates a new Health struct
+func NewHealth() *Health {
+	return &Health{
+		checks: NewHealthChecks(),
 	}
+}
+
+// NewHealthChekcs creates a new HealthChecks struct
+func NewHealthChecks() HealthChecks {
+	return HealthChecks{items: make(map[string]*HealthCheck)}
 }
 
 // Register a healthcheck. The health-check should not block and may not take
 // longer than 1s to finish.
-func (hc *Health) Register(name string, healthCheck HealthCheck) {
-	log.Printf("Registering Health Check: %s\n", name)
-	hc.checks.items[name] = healthCheck
-
+func (hc *Health) Register(healthCheck *HealthCheck) {
+	log.Printf("Registering Health Check: %s\n", healthCheck.Name)
+	hc.checks.items[healthCheck.Name] = healthCheck
+	go healthCheck.start()
 }
 
-// aggregateState collects the state of the application
-func (health *Health) aggregateState() {
+// start checks the health function
+func (hc *HealthCheck) start() {
 	for {
-		var wg sync.WaitGroup
-		health.checks.RLock()
-		defer health.checks.RUnlock()
-		for name, x := range health.checks.items {
-			wg.Add(1)
-			go func(name string, healthCheck HealthCheck) {
-				defer wg.Done()
-				if err := timeout(healthCheck); err == nil {
-					health.status.remove(name)
-				} else {
-					health.status.add(name, err.Error())
-				}
-			}(name, x)
+		if err := timeout(hc.Handler); err == nil {
+			hc.healthy = true
+			hc.msg = ""
+		} else {
+			hc.healthy = false
+			hc.msg = err.Error()
 		}
-		wg.Wait()
-		time.Sleep(time.Second)
+		time.Sleep(hc.Interval)
 	}
-}
-
-// remove a check from the status list
-func (hs *HealthStatus) remove(name string) {
-	hs.Lock()
-	defer hs.Unlock()
-	delete(hs.items, name)
-}
-
-// add a check to the status list
-func (hs *HealthStatus) add(name string, message string) {
-	hs.Lock()
-	defer hs.Unlock()
-	hs.items[name] = message
 }
 
 // timeout wait for the healthcheck function to return. After 1s the timeout
 // is thrown.
-func timeout(healthCheck HealthCheck) error {
+func timeout(healthCheck HealthFunc) error {
 	healthWait := make(chan error, 1)
 	go func() {
 		healthWait <- healthCheck()
@@ -102,14 +87,22 @@ func timeout(healthCheck HealthCheck) error {
 
 // page renders the health status page
 func (h *Health) page(w http.ResponseWriter, r *http.Request) {
-	h.status.RLock()
-	defer h.status.RUnlock()
+	h.checks.RLock()
+	defer h.checks.RUnlock()
 
-	if len(h.status.items) == 0 {
+	errors := make(map[string]string)
+	for name, hc := range h.checks.items {
+		if !hc.healthy {
+			errors[name] = hc.msg
+		}
+	}
+
+	if len(errors) == 0 {
 		writeStatus(w, Status{"up", nil}, http.StatusOK)
 	} else {
-		writeStatus(w, Status{"down", h.status.items}, http.StatusServiceUnavailable)
+		writeStatus(w, Status{"down", errors}, http.StatusServiceUnavailable)
 	}
+
 }
 
 func writeStatus(w http.ResponseWriter, status Status, code int) {

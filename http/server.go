@@ -9,31 +9,47 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// holds the local address
+var localAddress string
+
 type MicroService struct {
-	Admin  AdminServer
-	Health Health
-	muxx   *mux.Router
+	Admin   AdminServer
+	Health  *Health
+	Metrics *Metrics
+	muxx    *mux.Router
 }
 
 type ContextHandler func(http.ResponseWriter, *http.Request, *Context)
 
+// Set up the service
+func init() {
+	guessedAddress, err := guessLocalAddress()
+	if err != nil {
+		log.Fatal("No IP found! Exiting...")
+	}
+	log.Printf("Guess I'm running on %s\n", guessedAddress)
+	localAddress = guessedAddress
+
+}
+
 // Instantiate a new microservice
 func NewMicroService() *MicroService {
 	return &MicroService{
-		Admin: NewAdminServer(),
-		muxx:  mux.NewRouter(),
+		Admin:   NewAdminServer(),
+		Health:  NewHealth(),
+		Metrics: NewMetrics(),
+		muxx:    mux.NewRouter(),
 	}
-}
-
-func (m *MicroService) StartAdmin() {
-	go m.Admin.Serve()
 }
 
 // Wrap a Handler with AccessLogger and Principal
 func (m *MicroService) Handle(method string, path string, handler ContextHandler) {
 	log.Printf("Adding resource [%s] %s\n", method, path)
 	m.muxx.Handle(path, Context{
-		next: AccessLogger{handler}.ServeHTTP,
+		ms: m,
+		next: HttpInstrument{
+			AccessLogger{handler}.ServeHTTP,
+		}.ServeHTTP,
 	}).Methods(method)
 }
 
@@ -41,6 +57,7 @@ func (m *MicroService) Handle(method string, path string, handler ContextHandler
 func (m *MicroService) Principal(method string, path string, handler ContextHandler) {
 	fmt.Printf("Adding principal resource [%s] %s\n", method, path)
 	m.muxx.Handle(path, Context{
+		ms:   m,
 		next: AccessLogger{Principal{handler}.ServeHTTP}.ServeHTTP,
 	}).Methods(method)
 }
@@ -53,6 +70,7 @@ func (ms *MicroService) NotAllowed(method string, path string) {
 	}
 
 	ms.muxx.Handle(path, Context{
+		ms:   ms,
 		next: AccessLogger{MethodNotAllowed}.ServeHTTP,
 	}).Methods(method)
 }
@@ -61,7 +79,7 @@ func (ms *MicroService) NotAllowed(method string, path string) {
 func (ms *MicroService) StartOnPort(port int) {
 
 	// Start admin server
-	ms.StartAdmin()
+	go ms.Admin.Serve(ms)
 
 	// start the web server
 	log.Printf("MicroService is listening on %d....\n", port)
