@@ -9,36 +9,24 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// holds the local address
-var localAddress string
-
 type MicroService struct {
 	Admin   AdminServer
 	Health  *Health
 	Metrics *Metrics
 	muxx    *mux.Router
+	name    string
 }
 
 type ContextHandler func(http.ResponseWriter, *http.Request, *Context)
 
-// Set up the service
-func init() {
-	guessedAddress, err := guessLocalAddress()
-	if err != nil {
-		log.Fatal("No IP found! Exiting...")
-	}
-	log.Printf("Guess I'm running on %s\n", guessedAddress)
-	localAddress = guessedAddress
-
-}
-
 // Instantiate a new microservice
-func NewMicroService() *MicroService {
+func NewMicroService(name string) *MicroService {
 	return &MicroService{
 		Admin:   NewAdminServer(),
 		Health:  NewHealth(),
-		Metrics: NewMetrics(),
+		Metrics: NewMetrics(name),
 		muxx:    mux.NewRouter(),
+		name:    name,
 	}
 }
 

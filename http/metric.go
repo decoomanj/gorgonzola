@@ -2,15 +2,14 @@ package gorgonzola
 
 import (
 	"bytes"
-	"math/rand"
+	"log"
 	"net/http"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
 )
 
-type XMetric interface {
+type Metric interface {
 	GetName() string
 	Stringify() bytes.Buffer
 }
@@ -18,18 +17,22 @@ type XMetric interface {
 //
 type Metrics struct {
 	sync.RWMutex
-	items  map[string]*XMetric
-	status TTLDaemon
+	items   map[string]*Metric
+	status  TTLList
+	expires time.Duration
+	name    string
 }
 
-func NewMetrics() *Metrics {
+func NewMetrics(name string) *Metrics {
 	return &Metrics{
-		items:  make(map[string]*XMetric),
-		status: NewTTLDaemon(),
+		name:    name,
+		expires: time.Second * 2,
+		items:   make(map[string]*Metric),
+		status:  NewTTLList(),
 	}
 }
 
-func (m *Metrics) Register(metric XMetric, reap time.Duration) XMetric {
+func (m *Metrics) Register(metric Metric, reap time.Duration) Metric {
 	m.Lock()
 	defer m.Unlock()
 	m.items[metric.GetName()] = &metric
@@ -37,16 +40,16 @@ func (m *Metrics) Register(metric XMetric, reap time.Duration) XMetric {
 	return metric
 }
 
-func (m *Metrics) Get(name string) XMetric {
+func (m *Metrics) Get(name string) Metric {
 	if v, ok := m.items[name]; ok {
 		return *v
 	}
 	return nil
 }
 
-type XMetricCreate func(name string) XMetric
+type MetricCreator func(name string) Metric
 
-func (metrics *Metrics) GetOrCreate(name string, f XMetricCreate) XMetric {
+func (metrics *Metrics) GetOrCreate(name string, f MetricCreator) Metric {
 	if m := metrics.Get(name); m != nil {
 		return m
 	} else {
@@ -55,17 +58,9 @@ func (metrics *Metrics) GetOrCreate(name string, f XMetricCreate) XMetric {
 }
 
 func (m *Metrics) reap(name string, reap time.Duration) {
-
 	for {
 		if metric, ok := m.items[name]; ok {
-
-			ttl := &TTL{
-				item: (*metric).Stringify(),
-			}
-			ttl.touch()
-
-			m.status.items[RandStringBytesMaskImprSrc(16)] = ttl
-
+			m.status.Add((*metric).Stringify(), m.expires)
 			time.Sleep(reap)
 		}
 	}
@@ -80,60 +75,17 @@ func (m *Metrics) page(w http.ResponseWriter, r *http.Request) {
 
 	m.status.Lock()
 	defer m.status.Unlock()
-	for _, item := range m.status.items {
-		x := item.item.(bytes.Buffer)
-		w.Write(x.Bytes())
-	}
-}
 
-// TODO cleanup
-var src = rand.NewSource(time.Now().UnixNano())
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const (
-	letterIdxBits = 6                    // 6 bits to represent a letter index
-	letterIdxMask = 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
-	letterIdxMax  = 63 / letterIdxBits   // # of letter indices fitting in 63 bits
-)
-
-func RandStringBytesMaskImprSrc(n int) string {
-	b := make([]byte, n)
-	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, src.Int63(), letterIdxMax; i >= 0; {
-		if remain == 0 {
-			cache, remain = src.Int63(), letterIdxMax
+	e := m.status.list.Front()
+	for {
+		if e != nil {
+			buf := e.Value.(*TTLItem).item.(bytes.Buffer)
+			w.Write(buf.Bytes())
+			e = e.Next()
+		} else {
+			break
 		}
-		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
-			b[i] = letterBytes[idx]
-			i--
-		}
-		cache >>= letterIdxBits
-		remain--
 	}
 
-	return string(b)
-}
-
-// ********************************************************************************
-
-type MMetric struct {
-	sync.RWMutex
-	Name string
-	mem  float64
-}
-
-func (vv *MMetric) GetName() string {
-	return vv.Name
-}
-
-func (x *MMetric) Stringify() bytes.Buffer {
-	var buffer bytes.Buffer
-
-	m := &runtime.MemStats{}
-	runtime.ReadMemStats(m)
-	nowUnix := time.Now().UnixNano()
-
-	buffer.WriteString(x.Name + " value=" + strconv.FormatUint(m.Alloc, 10) + " " + strconv.FormatInt(nowUnix, 10) + "\n")
-
-	return buffer
+	log.Println("size: " + strconv.Itoa(m.status.list.Len()))
 }

@@ -9,7 +9,7 @@ import (
 
 type ValveValue struct {
 	sync.RWMutex
-	XMetric
+	Metric
 	vv *ValveVec
 	v  float64
 }
@@ -52,10 +52,9 @@ func (vv *ValveVec) Stringify() bytes.Buffer {
 	vv.Lock()
 	now := time.Now()
 	nowUnix := now.UnixNano() // keep it stable for this method
-	diff := float64(nowUnix - vv.lastRead.UnixNano())
 
 	for k, x := range vv.value {
-		buffer.WriteString(vv.name + ",target=" + k + " value=" + strconv.FormatFloat(x.v/diff*1000000, 'E', -1, 64) + " " + strconv.FormatInt(nowUnix, 10) + "\n")
+		buffer.WriteString(vv.name + ",from=" + k + " value=" + strconv.FormatFloat(x.v, 'f', -1, 64) + " " + strconv.FormatInt(nowUnix, 10) + "\n")
 		delete(vv.value, k)
 	}
 	vv.lastRead = now

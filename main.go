@@ -14,7 +14,7 @@ import (
 )
 
 // Delete a file from the storage
-func Do(w http.ResponseWriter, r *http.Request, c *gorgonzola.Context) {
+func Post(w http.ResponseWriter, r *http.Request, c *gorgonzola.Context) {
 
 	fmt.Println("PROCESSING")
 
@@ -28,6 +28,14 @@ func Do(w http.ResponseWriter, r *http.Request, c *gorgonzola.Context) {
 
 	fmt.Fprintln(w, "some content")
 
+}
+
+// Delete a file from the storage
+func Get(w http.ResponseWriter, r *http.Request, c *gorgonzola.Context) {
+
+	// set status
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("test"))
 }
 
 func myFunc() error {
@@ -54,13 +62,14 @@ func main() {
 	a := &gorgonzola.HealthCheck{Name: "test", Handler: myFunc, Interval: time.Millisecond * 100}
 	b := &gorgonzola.HealthCheck{Name: "test2", Handler: myFunc2, Interval: time.Second * 2}
 
-	ms := gorgonzola.NewMicroService()
+	ms := gorgonzola.NewMicroService("test-service")
 	ms.Health.Register(a)
 	ms.Health.Register(b)
 
-	ms.Metrics.Register(&gorgonzola.MMetric{Name: "memory.alloc"}, time.Millisecond*500)
+	ms.Metrics.Register(&gorgonzola.GoMetrics{}, time.Millisecond*500)
 
-	ms.Handle("POST", "/jan", Do)
+	ms.Handle("POST", "/jan", Post)
+	ms.Handle("GET", "/jan", Get)
 
 	ms.Start()
 
