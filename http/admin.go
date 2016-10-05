@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	//"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // AdminMux is the server to handle administrative requests
@@ -30,8 +30,11 @@ func (admin *AdminServer) Serve(ms *MicroService) {
 	muxx.HandleFunc("/health", ms.Health.page)
 
 	// add metrics
-	muxx.HandleFunc("/metrics", ms.Metrics.page)
-	//admin.muxx.Handle("/metrics", prometheus.Handler())
+	muxx.Handle("/metrics", prometheus.Handler())
+
+	// add topology
+	// TODO: rename
+	muxx.HandleFunc("/topology", ms.Metrics.page)
 
 	// default port
 	port := 9090
